@@ -1,0 +1,66 @@
+services:
+  app:
+    &app
+    build: .
+    restart: always
+    environment:
+      DATABASE_URL: postgresql+asyncpg://admin:admin@db:5432/postgres
+      TASKIQ_BROKER_URL: redis://valkey/
+      TASKIQ_RESULT_BACKEND_URL: redis://valkey/
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    ports:
+      - 8000:8000
+    command: [ "uvicorn", "app.main.web:app", "--host", "0.0.0.0", "--port", "8000" ]
+
+  taskiq-worker:
+    <<: *app
+    ports: [ ]
+    command: [
+      "taskiq", "worker",
+      "--workers", "1",
+      "--max-fails", "1",
+      "--max-async-tasks", "30",
+
+      "app.infrastructure.background.broker:broker",
+      "app.infrastructure.background.tasks",
+    ]
+
+  taskiq-scheduler:
+    <<: *app
+    ports: [ ]
+    command: [
+      "taskiq", "scheduler",
+      "app.infrastructure.background.scheduler:scheduler",
+      "app.infrastructure.background.tasks",
+    ]
+
+  db:
+    image: "postgres:15.2-bullseye"
+    hostname: db
+    environment:
+      POSTGRES_DB: "postgres"
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+    restart: always
+    healthcheck:
+      test: pg_isready -U admin -d postgres
+      interval: 5s
+      timeout: 10s
+      retries: 40
+
+
+  valkey:
+    image: bitnami/valkey:8.0.2
+    hostname: valkey
+    restart: always
+    environment:
+      ALLOW_EMPTY_PASSWORD: "yes"
+    healthcheck:
+      test: valkey-cli ping
+      interval: 5s
+      timeout: 5s
+      retries: 50
